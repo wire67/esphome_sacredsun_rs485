@@ -1,7 +1,7 @@
 # esphome_sacredsun_rs485
 ESPHome device to fetch data from LiFePo4 SacredSun SCIFP48100 (Tian BMS) or equivalent via RS485 and push to Home Assistant Entities
 
-## RS485
+## RS-485
 
 - Pin 1 is RS-485 B-
 - Pin 2 is RS-485 A+
@@ -13,7 +13,15 @@ ESPHome device to fetch data from LiFePo4 SacredSun SCIFP48100 (Tian BMS) or equ
 - ASCII
 - 8N1
 
-## Frame decoding
+## ESPHome Hardware
+
+You will need
+- any ESP32 or ESP8266 with 2 GPIOs for the serial Tx/Rx.
+- a RS-485 to UART TTL adapter board.
+
+# Frame decoding (development only)
+
+For ESPHome usage you do not need to continue to this section.
 
 Data mapping by looking at the comms with `Tian_Power Energy Storage BMS V1.5.68-15.exe`.
 
