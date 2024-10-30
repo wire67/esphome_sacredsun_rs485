@@ -1,0 +1,154 @@
+esphome:
+  name: esphome-sacredsun
+  friendly_name: esphome-sacredsun
+  # manually include the custom header
+  includes:
+    - "esphome_sacredsun_rs485.h"  # Make sure the `.h` file is in the same directory as the YAML file
+
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+  level: DEBUG
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret sacredsun_api_encr_key
+
+ota:
+  - platform: esphome
+    password: !secret sacredsun_ota_pwd
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "esphome-Sacredsun"
+    password: !secret sacredsun_wifi_ap_pwd
+
+captive_portal:
+
+uart:
+  tx_pin: GPIO22
+  rx_pin: GPIO23
+  baud_rate: 9600
+  id: uart_bus
+
+sensor:
+  - platform: custom
+    id: sacredsun_id
+    lambda: |-
+      auto sacredsun = new SacredSunSensor(id(uart_bus), 4000, 2);
+      App.register_component(sacredsun);
+      return {
+      sacredsun->pack[0].soc,
+      sacredsun->pack[0].voltage,
+      // sacredsun->pack[0].tempBms[0],
+      // sacredsun->pack[0].tempBms[1],
+      // sacredsun->pack[0].tempBms[2],
+      // sacredsun->pack[0].tempBat[0],
+      // sacredsun->pack[0].tempBat[1],
+      // sacredsun->pack[0].tempBat[2],
+      // sacredsun->pack[0].tempBat[3],
+      sacredsun->pack[0].current,
+      sacredsun->pack[0].soh,
+      sacredsun->pack[0].nominalCap,
+      sacredsun->pack[0].remainCap,
+      sacredsun->pack[0].cycles,
+      sacredsun->pack[1].soc,
+      sacredsun->pack[1].voltage,
+      // sacredsun->pack[1].tempBms[0],
+      // sacredsun->pack[1].tempBms[1],
+      // sacredsun->pack[1].tempBms[2],
+      // sacredsun->pack[1].tempBat[0],
+      // sacredsun->pack[1].tempBat[1],
+      // sacredsun->pack[1].tempBat[2],
+      // sacredsun->pack[1].tempBat[3],
+      sacredsun->pack[1].current,
+      sacredsun->pack[1].soh,
+      sacredsun->pack[1].nominalCap,
+      sacredsun->pack[1].remainCap,
+      sacredsun->pack[1].cycles
+      };
+    sensors:
+      - name: "Pack 1 SOC"
+        id: pack_1_soc
+        unit_of_measurement: "%"
+        accuracy_decimals: 2
+        filters:
+          - multiply: 0.01
+      - name: "Pack 1 Voltage"
+        id: pack_1_voltage
+        unit_of_measurement: "V"
+        accuracy_decimals: 2
+        filters:
+          - multiply: 0.01
+      - name: "Pack 1 Current"
+        id: pack_1_current
+        unit_of_measurement: "A"
+        accuracy_decimals: 2
+        filters:
+          - multiply: 0.01
+      - name: "Pack 1 SOH"
+        id: pack_1_soh
+        unit_of_measurement: "%"
+      - name: "Pack 1 Nominal Capacity"
+        id: pack_1_nominal_cap
+        unit_of_measurement: "Ah"
+        accuracy_decimals: 2
+        filters:
+          - multiply: 0.01
+      - name: "Pack 1 Remaining Capacity"
+        id: pack_1_remaining_cap
+        unit_of_measurement: "Ah"
+        accuracy_decimals: 2
+        filters:
+          - multiply: 0.01
+      - name: "Pack 1 Cycles"
+        id: pack_1_cycles
+        unit_of_measurement: "times"
+        accuracy_decimals: 0
+
+      - name: "Pack 2 SOC"
+        id: pack_2_soc
+        unit_of_measurement: "%"
+        accuracy_decimals: 2
+        filters:
+          - multiply: 0.01
+      - name: "Pack 2 Voltage"
+        id: pack_2_voltage
+        unit_of_measurement: "V"
+        accuracy_decimals: 2
+        filters:
+          - multiply: 0.01
+      - name: "Pack 2 Current"
+        id: pack_2_current
+        unit_of_measurement: "A"
+        accuracy_decimals: 2
+        filters:
+          - multiply: 0.01
+      - name: "Pack 2 SOH"
+        id: pack_2_soh
+        unit_of_measurement: "%"
+      - name: "Pack 2 Nominal Capacity"
+        id: pack_2_nominal_cap
+        unit_of_measurement: "Ah"
+        accuracy_decimals: 2
+        filters:
+          - multiply: 0.01
+      - name: "Pack 2 Remaining Capacity"
+        id: pack_2_remaining_cap
+        unit_of_measurement: "Ah"
+        accuracy_decimals: 2
+        filters:
+          - multiply: 0.01
+      - name: "Pack 2 Cycles"
+        id: pack_2_cycles
+        unit_of_measurement: "times"
+        accuracy_decimals: 0
