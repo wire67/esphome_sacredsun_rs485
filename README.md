@@ -17,7 +17,15 @@ ESPHome device to fetch data from LiFePo4 SacredSun SCIFP48100 (Tian BMS) or equ
 
 Data mapping by looking at the comms with `Tian_Power Energy Storage BMS V1.5.68-15.exe`.
 
-### Captured Sample Frame
+## Command
+
+The command must be sent in ASCII format.
+- Address 1: "`~22014A42E00201FD28\r`"
+- Address 2: "`~22024A42E00201FD27\r`"
+
+### Captured Sample Frame Response
+
+The response is received in ASCII format.
 
 ```
 ~22014A0020C2002
