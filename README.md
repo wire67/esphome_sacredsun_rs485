@@ -110,3 +110,26 @@ If no valid frame (checksum OK) is received from a pack for `offline_timeout` (d
 - the combined sensors (pack `-1`) are recalculated from the remaining online packs, or `NaN` if none are online
 
 The pack comes back automatically with the next valid frame. Pick a timeout of at least 2 full polling rounds (`send_interval * pack_count * 2`), otherwise a warning is logged at boot.
+
+
+## SOC correction (`soc_corrected`)
+
+The BMS coulomb counter freezes at low current and never resyncs at the low end, so SOC can read 50%+ while the weakest cell is already near the knee. The component can publish a corrected SOC next to the raw one:
+
+```yaml
+sacredsun_rs485:
+  soc_correction_max_current: 10      # A, trust cell voltage only below this current
+  soc_correction_slew: 2              # max % the corrected SOC may drop per frame
+  soc_correction_full_cell_mv: 3450   # full-charge anchor for the LOWEST cell, set below your absorption cell voltage
+
+sensor:
+  - platform: sacredsun_rs485
+    pack: 0
+    sensors:
+      - {name: "Pack 1 SOC corrected", type: soc_corrected, unit_of_measurement: "%", filters: [{multiply: 0.01}]}
+      - {name: "Pack 1 Cell Min", type: cell_min, unit_of_measurement: "mV"}
+      - {name: "Pack 1 Cell Max", type: cell_max, unit_of_measurement: "mV"}
+```
+
+How it works: at low current the weakest cell voltage gives an upper bound for SOC (conservative LiFePO4 curve in `soc_ceiling_from_cell_mv`, tune it for your cells). Whenever the BMS SOC exceeds that bound, the difference is stored as an offset (it only grows) and subtracted from the BMS SOC. The offset is cleared when the BMS reports >= 99% AND the lowest cell is >= `soc_correction_full_cell_mv` (all cells at the top, so imbalance is taken into account; if balancing never lifts the weakest cell that far, the offset stays and the corrected SOC stays conservative). The offset is kept in RAM only (lost on reboot).
+`remaining_kwh` raw unit is 0.1 Wh, use `multiply: 0.0001` for kWh.
