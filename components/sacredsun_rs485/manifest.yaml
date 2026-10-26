@@ -1,0 +1,6 @@
+version: 1.0.0
+dependencies:
+  - source:
+      type: git
+      url: https://github.com/wire67/esphome_sacredsun_rs485
+      ref: main
