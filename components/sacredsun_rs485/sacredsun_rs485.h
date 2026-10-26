@@ -2,6 +2,8 @@
 #include "esphome/core/component.h"
 #include "esphome/components/uart/uart.h"
 #include "esphome/components/sensor/sensor.h"
+#include "esphome/components/binary_sensor/binary_sensor.h"
+#include <cmath>
 #include "esphome/core/helpers.h"
 
 namespace esphome
@@ -22,11 +24,19 @@ namespace esphome
     class SacredSunSensor : public PollingComponent, public uart::UARTDevice
     {
     public:
-      SacredSunSensor(uart::UARTComponent *parent, int send_interval = 4000, int pack_count = 2)
+      SacredSunSensor(uart::UARTComponent *parent, int send_interval = 4000, int pack_count = 2,
+                      uint32_t offline_timeout = 60000)
           : PollingComponent(10), uart::UARTDevice(parent)
       {
         this->send_interval_ = MAX(1000, send_interval);
         this->pack_count_ = MIN(9, pack_count);
+        this->offline_timeout_ms_ = offline_timeout;
+        for (uint8_t i = 0; i < MAX_PACKS; i++)
+        {
+          this->online_state_[i] = -1;
+          this->last_valid_ms_[i] = 0;
+          this->online_sensor_[i] = nullptr;
+        }
       }
       struct PackData
       {
@@ -68,6 +78,15 @@ namespace esphome
       uint8_t pack_count_ = 1;
       uint8_t current_pack = 0;
       unsigned long last_send_time_ = 0;
+      // Offline detection: -1 = unknown (nothing decided yet), 0 = offline, 1 = online
+      int8_t online_state_[MAX_PACKS];
+      unsigned long last_valid_ms_[MAX_PACKS];
+      binary_sensor::BinarySensor *online_sensor_[MAX_PACKS];
+      void set_online_sensor(int8_t pack_idx, binary_sensor::BinarySensor *sens)
+      {
+        if (pack_idx >= 0 && pack_idx < MAX_PACKS)
+          online_sensor_[pack_idx] = sens;
+      }
       void add_sensor(std::string type, int8_t pack_idx, sensor::Sensor *sensor)
       {
         if (pack_idx >= MAX_PACKS)
@@ -109,7 +128,7 @@ namespace esphome
           else if (type == "cycles")
             pack_all.cycles = sensor;
           else if (type == "remaining_kwh")
-            pack[pack_idx].remain_kwh = sensor;
+            pack_all.remain_kwh = sensor;
         }
       }
       uint8_t ascii_char_to_number(char c)
@@ -160,6 +179,8 @@ namespace esphome
         float sum = 0.0f;
         for (uint8_t i = 0; i < count_max; i++)
         {
+          if (online_state_[i] != 1)
+            continue;
           if (sensor_type == "soc")
             sum += pack_raw[i].soc;
           else if (sensor_type == "voltage")
@@ -184,20 +205,102 @@ namespace esphome
       {
         if (count_max == 0)
           return 0.0f;
-        uint8_t valid_count=0;
+        uint8_t valid_count = 0;
         for (uint8_t i = 0; i < count_max; i++)
         {
-          if (pack_raw[i].voltage)
-          {
+          if (online_state_[i] == 1)
             valid_count++;
-          }
         }
+        if (valid_count == 0)
+          return NAN;
         return pack_all_sum(count_max, sensor_type) / valid_count;
       }
 
       void setup() override
       {
         ESP_LOGD("sacredsun", "Setup called, pack_count=%d", pack_count_);
+        unsigned long now = millis();
+        for (uint8_t i = 0; i < MAX_PACKS; i++)
+          last_valid_ms_[i] = now; // boot counts as "last seen" so the timeout starts now
+        if (offline_timeout_ms_ > 0 && offline_timeout_ms_ < (unsigned long) send_interval_ * pack_count_ * 2)
+          ESP_LOGW("sacredsun", "offline_timeout (%lu ms) is shorter than 2 full polling rounds (%lu ms), packs may flap",
+                   (unsigned long) offline_timeout_ms_, (unsigned long) send_interval_ * pack_count_ * 2);
+      }
+
+      void publish_nan_for_pack(uint8_t i)
+      {
+        if (pack[i].soc) pack[i].soc->publish_state(NAN);
+        if (pack[i].voltage) pack[i].voltage->publish_state(NAN);
+        if (pack[i].current) pack[i].current->publish_state(NAN);
+        if (pack[i].soh) pack[i].soh->publish_state(NAN);
+        if (pack[i].nominal_cap) pack[i].nominal_cap->publish_state(NAN);
+        if (pack[i].remain_cap) pack[i].remain_cap->publish_state(NAN);
+        if (pack[i].cycles) pack[i].cycles->publish_state(NAN);
+        if (pack[i].remain_kwh) pack[i].remain_kwh->publish_state(NAN);
+      }
+
+      void publish_aggregates()
+      {
+        if (pack_all.soc)
+          pack_all.soc->publish_state(pack_all_average(pack_count_, "soc"));
+        if (pack_all.voltage)
+          pack_all.voltage->publish_state(pack_all_average(pack_count_, "voltage"));
+        if (pack_all.current)
+          pack_all.current->publish_state(pack_all_online_sum_or_nan("current"));
+        if (pack_all.soh)
+          pack_all.soh->publish_state(pack_all_average(pack_count_, "soh"));
+        if (pack_all.nominal_cap)
+          pack_all.nominal_cap->publish_state(pack_all_online_sum_or_nan("nominal_cap"));
+        if (pack_all.remain_cap)
+          pack_all.remain_cap->publish_state(pack_all_online_sum_or_nan("remaining_cap"));
+        if (pack_all.cycles)
+          pack_all.cycles->publish_state(pack_all_average(pack_count_, "cycles"));
+        if (pack_all.remain_kwh)
+          pack_all.remain_kwh->publish_state(pack_all_online_sum_or_nan("remaining_kwh"));
+      }
+
+      // Sum over online packs, NaN if no pack is online
+      float pack_all_online_sum_or_nan(const std::string &sensor_type)
+      {
+        for (uint8_t i = 0; i < pack_count_; i++)
+        {
+          if (online_state_[i] == 1)
+            return pack_all_sum(pack_count_, sensor_type);
+        }
+        return NAN;
+      }
+
+      void set_pack_online(uint8_t i, bool online)
+      {
+        if (online_state_[i] == (online ? 1 : 0))
+          return;
+        online_state_[i] = online ? 1 : 0;
+        if (online)
+        {
+          ESP_LOGI("sacredsun", "Pack %d is online", i + 1);
+        }
+        else
+        {
+          ESP_LOGW("sacredsun", "Pack %d offline: no valid frame for %lu ms", i + 1, (unsigned long) offline_timeout_ms_);
+          pack_raw[i] = PackRawValues();
+          publish_nan_for_pack(i);
+        }
+        if (online_sensor_[i])
+          online_sensor_[i]->publish_state(online);
+        if (!online)
+          publish_aggregates();
+      }
+
+      void check_offline_timeouts()
+      {
+        if (offline_timeout_ms_ == 0)
+          return;
+        unsigned long now = millis();
+        for (uint8_t i = 0; i < pack_count_; i++)
+        {
+          if (online_state_[i] != 0 && (now - last_valid_ms_[i]) >= offline_timeout_ms_)
+            set_pack_online(i, false);
+        }
       }
 
       void update() override
@@ -207,6 +310,8 @@ namespace esphome
         static uint8_t buf[buf_len];
         static size_t rec = 0;
         static bool is_wait_resp = false;
+
+        check_offline_timeouts();
 
         if (millis() - last_send_time_ >= send_interval_)
         {
@@ -241,6 +346,8 @@ namespace esphome
             ESP_LOGD("sacredsun", "Frame detected. Calculated checksum: %02X, wanted: %02X", calc_chk, wanted_chk);
             if (calc_chk == wanted_chk)
             {
+              last_valid_ms_[current_pack] = millis();
+              set_pack_online(current_pack, true);
               // Store values for all packs
               float soc_val = ascii_to_integer((const char *)&buf[15]);
               float voltage_val = ascii_to_integer((const char *)&buf[19]);
@@ -280,23 +387,8 @@ namespace esphome
               if (pack[current_pack].remain_kwh)
                 pack[current_pack].remain_kwh->publish_state(remain_kwh_val);
 
-              // Publish averages/sums for all packs
-              if (pack_all.soc)
-                pack_all.soc->publish_state(pack_all_average(pack_count_, "soc"));
-              if (pack_all.voltage)
-                pack_all.voltage->publish_state(pack_all_average(pack_count_, "voltage"));
-              if (pack_all.current)
-                pack_all.current->publish_state(pack_all_sum(pack_count_, "current"));
-              if (pack_all.soh)
-                pack_all.soh->publish_state(pack_all_average(pack_count_, "soh"));
-              if (pack_all.nominal_cap)
-                pack_all.nominal_cap->publish_state(pack_all_sum(pack_count_, "nominal_cap"));
-              if (pack_all.remain_cap)
-                pack_all.remain_cap->publish_state(pack_all_sum(pack_count_, "remain_cap"));
-              if (pack_all.cycles)
-                pack_all.cycles->publish_state(pack_all_average(pack_count_, "cycles"));
-              if (pack_all.remain_kwh)
-                pack_all.remain_kwh->publish_state(pack_all_sum(pack_count_, "remain_kwh"));
+              // Publish averages/sums for all online packs
+              publish_aggregates();
             }
             else
             {
@@ -313,6 +405,7 @@ namespace esphome
 
     protected:
       unsigned long send_interval_;
+      uint32_t offline_timeout_ms_ = 60000;
     };
   }
 }

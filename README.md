@@ -100,3 +100,13 @@ Still remaining is the decoding of the following
 2. Protection
 3. Fault
 4. Statuses: CHG, DSG, Limit, LED, Buzz, Heat
+
+## Offline detection
+
+If no valid frame (checksum OK) is received from a pack for `offline_timeout` (default `60s`, `0s` disables), the pack is marked offline:
+
+- its sensors publish `NaN` (shown as `unknown` in Home Assistant) instead of keeping the last stale value
+- its optional `binary_sensor` (`platform: sacredsun_rs485`, `pack: N`, device class connectivity) turns off
+- the combined sensors (pack `-1`) are recalculated from the remaining online packs, or `NaN` if none are online
+
+The pack comes back automatically with the next valid frame. Pick a timeout of at least 2 full polling rounds (`send_interval * pack_count * 2`), otherwise a warning is logged at boot.
