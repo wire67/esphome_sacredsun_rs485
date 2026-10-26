@@ -44,6 +44,7 @@ sacredsun_rs485:
   uart_id: uart_bus
   send_interval: 4000
   pack_count: 2
+  offline_timeout: 60s   # mark a pack offline if no valid frame for this long (0s disables)
 
 sensor:
   - platform: sacredsun_rs485
@@ -141,3 +142,11 @@ sensor:
         type: cycles
         unit_of_measurement: "times"
         accuracy_decimals: 0
+
+binary_sensor:
+  - platform: sacredsun_rs485
+    pack: 0
+    name: "Pack 1 Online"
+  - platform: sacredsun_rs485
+    pack: 1
+    name: "Pack 2 Online"

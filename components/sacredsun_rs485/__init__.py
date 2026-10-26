@@ -4,9 +4,11 @@ from esphome.components import uart, sensor
 from esphome.const import CONF_ID
 CODEOWNERS = ["@wire67"]
 DEPENDENCIES = ["uart"]
+AUTO_LOAD = ["sensor", "binary_sensor"]
 sacredsun_ns = cg.esphome_ns.namespace("sacredsun")
 SacredSunSensor = sacredsun_ns.class_("SacredSunSensor", cg.PollingComponent)
 CONF_UART_ID = "uart_id"
+CONF_OFFLINE_TIMEOUT = "offline_timeout"
 CONF_PACK = "pack"
 CONF_SENSORS = "sensors"
 CONF_TYPE = "type"
@@ -30,6 +32,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Required(CONF_UART_ID): cv.use_id(uart.UARTComponent),
         cv.Optional("send_interval", default=4000): cv.int_range(min=1000),
         cv.Optional("pack_count", default=2): cv.int_range(min=1, max=9),
+        cv.Optional(CONF_OFFLINE_TIMEOUT, default="60s"): cv.positive_time_period_milliseconds,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 async def to_code(config):
@@ -39,5 +42,6 @@ async def to_code(config):
         uart_component,
         config["send_interval"],
         config["pack_count"],
+        config[CONF_OFFLINE_TIMEOUT],
     )
     await cg.register_component(var, config)
