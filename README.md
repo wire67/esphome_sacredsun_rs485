@@ -1,29 +1,95 @@
-# esphome_sacredsun_rs485
-ESPHome device to fetch data from LiFePo4 SacredSun SCIFP48100 (Tian BMS) or equivalent via RS485 and push to Home Assistant Entities
+# SacredSun RS-485 for ESPHome
 
-## RS-485
+An external ESPHome component that polls SacredSun SCIFP48100 LiFePO4 battery packs over RS-485 and publishes their telemetry as Home Assistant entities. It supports up to nine addressed packs, per-pack health monitoring, combined multi-pack sensors, and optional cell-voltage-based SOC correction.
 
-- Pin 1 is RS-485 B-
-- Pin 2 is RS-485 A+
-- Each DIP switch represents a bit in the slave ID value
-  - address 1: ON-OFF-OFF-OFF-OFF-OFF
-  - address 2: OFF-ON-OFF-OFF-OFF-OFF
-  - address 3: ON-ON-OFF-OFF-OFF-OFF
-- 9600 baud
-- ASCII
-- 8N1
+The protocol has been developed against the SacredSun SCIFP48100 with a Tian BMS. Compatibility with other models or firmware variants has not been verified.
 
-## ESPHome Hardware
+## Features
 
-You will need
-- any ESP32 or ESP8266 with 2 GPIOs for the serial Tx/Rx.
-- a RS-485 to UART TTL adapter board.
+- SOC, voltage, current, state of health, nominal and remaining capacity, cycle count, and estimated remaining energy.
+- Lowest and highest cell voltage, plus optional corrected SOC.
+- Per-pack online status and stale-value invalidation after a configurable timeout.
+- Combined sensors across online packs. SOC, voltage, SOH, cycle count, and corrected SOC are averaged; current, capacity, and energy are summed; cell sensors report the lowest or highest cell across online packs.
+- Configurable polling interval, pack count, and SOC correction thresholds.
 
-# Frame decoding (development only)
+## Installation and configuration
 
-For ESPHome usage you do not need to continue to this section.
+Add the component source to your ESPHome device configuration:
 
-Data mapping by looking at the comms with `Tian_Power Energy Storage BMS V1.5.68-15.exe`.
+```yaml
+external_components:
+  - source: github://wire67/esphome_sacredsun_rs485@components
+    refresh: 0s
+```
+
+Configure the UART and component. The component defaults to a 4-second polling interval, two packs, and a 60-second offline timeout. The `pack` index in ESPHome is zero-based (`0` is BMS address `1`).
+
+```yaml
+uart:
+  id: uart_bus
+  tx_pin: GPIO22
+  rx_pin: GPIO23
+  baud_rate: 9600
+
+sacredsun_rs485:
+  uart_id: uart_bus
+  send_interval: 4000
+  pack_count: 2
+  offline_timeout: 60s
+
+sensor:
+  - platform: sacredsun_rs485
+    pack: 0
+    sensors:
+      - name: "Pack 1 SOC"
+        type: soc
+        unit_of_measurement: "%"
+        filters:
+          - multiply: 0.01
+      - name: "Pack 1 Voltage"
+        type: voltage
+        unit_of_measurement: "V"
+        filters:
+          - multiply: 0.01
+
+binary_sensor:
+  - platform: sacredsun_rs485
+    pack: 0
+    name: "Pack 1 Online"
+```
+
+The complete two-pack example, including Home Assistant API, OTA, and primary sensors, is in [sample-esp-sacredsun.yaml](sample-esp-sacredsun.yaml).
+
+### Supported sensor types
+
+| Type | Raw unit | Notes |
+| --- | --- | --- |
+| `soc` | 0.01% | Apply `multiply: 0.01` for percent. |
+| `voltage` | 0.01 V | Apply `multiply: 0.01` for volts. |
+| `current` | 0.01 A | Apply `multiply: 0.01` for amperes. |
+| `soh` | % | State of health. |
+| `nominal_cap` | 0.01 Ah | Apply `multiply: 0.01` for amp-hours. |
+| `remaining_cap` | 0.01 Ah | Apply `multiply: 0.01` for amp-hours. |
+| `remaining_kwh` | 0.1 Wh | Apply `multiply: 0.0001` for kWh. |
+| `cycles` | cycles | Cycle count. |
+| `soc_corrected` | 0.01% | Apply `multiply: 0.01` for percent. |
+| `cell_min`, `cell_max` | mV | Lowest and highest valid cell voltage in the pack. |
+
+Set `pack: -1` on a sensor platform to create a combined sensor for configured packs. A `binary_sensor` requires an individual pack index from `0` to `8`.
+
+## Hardware and bus settings
+
+- ESP32 or ESP8266 with a UART and two GPIO pins.
+- RS-485-to-UART TTL adapter. The component does not configure a direction-control GPIO, so use an adapter with automatic transmit/receive direction control.
+- Battery RS-485 pin 1 is B-; pin 2 is A+.
+- Serial format: 9600 baud, ASCII, 8 data bits, no parity, 1 stop bit (8N1).
+- Configure each battery's DIP switches with a unique address. The first six switches encode the address in binary: address 1 is `ON-OFF-OFF-OFF-OFF-OFF`, address 2 is `OFF-ON-OFF-OFF-OFF-OFF`, and address 3 is `ON-ON-OFF-OFF-OFF-OFF`.
+
+## Protocol notes (development)
+
+The following captures and field map document the protocol investigation; they are not required to configure the ESPHome component.
+
+The field offsets below were inferred from communication with `Tian_Power Energy Storage BMS V1.5.68-15.exe`.
 
 ## Command
 
@@ -31,7 +97,7 @@ The command must be sent in ASCII format.
 - Address 1: "`~22014A42E00201FD28\r`"
 - Address 2: "`~22024A42E00201FD27\r`"
 
-### Captured Sample Frame Response
+### Captured response frame
 
 The response is received in ASCII format.
 
@@ -53,8 +119,6 @@ The response is received in ASCII format.
 ```
 
 ### Data Interpretation
-
-<!--StartFragment-->
 
 |       |     |                                                           |
 | ----: | --: | --------------------------------------------------------- |
@@ -88,18 +152,11 @@ The response is received in ASCII format.
 |     2 | 209 | Checksum: B8                                              |
 |     1 | 211 | End Frame “.” is 0x0D                                     |
 
-<!--EndFragment-->
+Checksum: 8-bit two's complement (`0x100 - sum of ASCII bytes`), excluding the start marker `~` and the two bytes at offsets 207-208 (`D4` to `D6`).
 
-Checksum : CheckSum8 2s Complement, 0x100 - Sum Of ASCII Bytes, exclude start “~” and ending “D4 to D6”.
+### Fields not currently decoded
 
-### Todo
-
-Still remaining is the decoding of the following
-
-1. Alarm
-2. Protection
-3. Fault
-4. Statuses: CHG, DSG, Limit, LED, Buzz, Heat
+Alarm, protection, fault, and status flags (CHG, DSG, Limit, LED, Buzz, Heat) are not currently exposed as entities.
 
 ## Offline detection
 
